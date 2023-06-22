@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+option go_package = "./proto";
+
+package converter_service;
+
+
+
+message Image{
+    string uid = 1;
+    string path = 2;
+    string name = 3;
+}
+
+message StoreImageRequest{
+    string uid = 1;
+    Image image = 2;
+    string replyTo = 3;
+
+}
+
+message StoreImageResponse{
+    string uid = 1;
+    string status = 2;
+}
