@@ -1,13 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"html/template"
 	"io"
 	"log"
 	"net/http"
-	"os"
-	"path"
 	"strconv"
 	"time"
 
@@ -43,15 +42,14 @@ func (g gatewayAPI) runApi() error {
 }
 
 func (g gatewayAPI) handleGetImage(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("Hello from get image"))
-
+	// id := r.URL.Pa
 }
 
 func (g gatewayAPI) handleConvertImage(w http.ResponseWriter, r *http.Request) {
 	log.Println("hello from convert")
 	//reading from form and saving image to disk
 	r.ParseMultipartForm(5 << 20)
-	f, fh, err := r.FormFile("file")
+	f, _, err := r.FormFile("file")
 	if err != nil {
 		fmt.Println(err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -59,32 +57,42 @@ func (g gatewayAPI) handleConvertImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	filename := fh.Filename
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, f); err != nil {
+		log.Println("ERROR:multipart to bytes", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write(nil)
+		return
+	}
 
-	filepath := path.Join("./temp", r.FormValue("imagename"))
-	_ = os.Mkdir(filepath, os.ModePerm)
-	file, err := os.OpenFile(path.Join(filepath, filename), os.O_WRONLY|os.O_CREATE, 0600)
-	if err != nil {
-		log.Println(err)
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write(nil)
-		return
-	}
-	io.Copy(file, f)
-	defer file.Close()
+	// filename := fh.Filename
+
 	//converting image to  webp
-	err = convertJpegToWebp(path.Join(filepath, filename))
+	res, err := convertJpegToWebp(&buf)
+	// log.Println(res)
 	if err != nil {
 		log.Println(err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write(nil)
 		return
 	}
-	//sending to rabiitmq
+
+	// filepath := path.Join("./temp", r.FormValue("imagename"))
+	// _ = os.Mkdir(filepath, os.ModePerm)
+	// file, err := os.OpenFile(path.Join(filepath, r.FormValue("imagename")+".webp"), os.O_WRONLY|os.O_CREATE, 0600)
+	// if err != nil {
+	// 	log.Println(err)
+	// 	w.WriteHeader(http.StatusInternalServerError)
+	// 	w.Write(nil)
+	// 	return
+	// }
+	// file.Write(res)
+	// defer file.Close()
+	// sending to rabiitmq
 	img := &storage.Image{
-		Uid:  uid(),
-		Name: r.FormValue("imagename"),
-		Path: path.Join(filepath, filename),
+		Uid:     uid(),
+		Name:    r.FormValue("imagename"),
+		Content: res,
 	}
 	storeMsg := &storage.StoreImageRequest{
 		Uid:     uid(),
@@ -92,7 +100,7 @@ func (g gatewayAPI) handleConvertImage(w http.ResponseWriter, r *http.Request) {
 		ReplyTo: "gateway",
 	}
 
-	log.Printf("INFO: convert request: %v", storeMsg)
+	log.Printf("INFO: convert request: %v", storeMsg.Uid)
 
 	//create channel andd to rchans with id
 	rchan := make(chan storage.StoreImageResponse)
@@ -103,10 +111,10 @@ func (g gatewayAPI) handleConvertImage(w http.ResponseWriter, r *http.Request) {
 		Message:   *storeMsg,
 	}
 	pchan <- msg
-	waitReply(storeMsg.Uid, rchan, w)
+	waitReply(storeMsg.Uid, rchan, w, r)
 }
 
-func waitReply(uid string, rchan chan storage.StoreImageResponse, w http.ResponseWriter) {
+func waitReply(uid string, rchan chan storage.StoreImageResponse, w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case storeResponse := <-rchan:
@@ -114,8 +122,8 @@ func waitReply(uid string, rchan chan storage.StoreImageResponse, w http.Respons
 			log.Printf("INFO: received reply: %v uid: %s", storeResponse, uid)
 
 			// send response back to client
-			response(w, "Created", 201)
-
+			// response(w, "Created", 201)
+			http.Redirect(w, r, "/", http.StatusCreated)
 			// remove channel from rchans
 			delete(rchans, uid)
 			return

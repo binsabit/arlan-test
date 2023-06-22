@@ -1,39 +1,37 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"image/jpeg"
+	"io"
 	"log"
-	"os"
 
 	"github.com/kolesa-team/go-webp/encoder"
 	"github.com/kolesa-team/go-webp/webp"
 )
 
-func convertJpegToWebp(path string) error {
-	file, err := os.Open(path)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
+func convertJpegToWebp(file io.Reader) ([]byte, error) {
+
 	image, err := jpeg.Decode(file)
 	if err != nil {
 		log.Println("here")
-		return err
+		return nil, err
 	}
-	log.Println(path)
-	output, err := os.Create("./" + path + ".webp")
-	if err != nil {
-		log.Println("f")
-		return err
-	}
-	defer output.Close()
+	var b bytes.Buffer
+
+	output := bufio.NewWriter(&b)
 
 	options, err := encoder.NewLossyEncoderOptions(encoder.PresetPhoto, 100)
 	if err != nil {
-		return err
+		log.Println("hello")
+
+		return nil, err
 	}
 	if err := webp.Encode(output, image, options); err != nil {
-		return err
+		log.Println("hello")
+		return nil, err
 	}
-	return nil
+	output.Flush()
+	return []byte(b.String()), nil
 }

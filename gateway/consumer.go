@@ -66,7 +66,7 @@ func initConsumer() {
 				log.Printf("ERROR: fail unmarshl: %s", msg.Body)
 				continue
 			}
-			log.Printf("INFO: received msg: %v", &storeResponse)
+			log.Printf("INFO: received msg: %v", &storeResponse.Status)
 
 			// ack for message
 			err = msg.Ack(true)

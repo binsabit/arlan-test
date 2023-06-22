@@ -8,8 +8,19 @@ package converter_service;
 
 message Image{
     string uid = 1;
-    string path = 2;
-    string name = 3;
+    string name = 2;
+    bytes content = 3;
+}
+
+message GetImageRequest{
+    string name = 1;
+    string replyTo = 2;
+}
+
+message GetImageResponse{
+    Image image = 1;
+    string status = 2;
+
 }
 
 message StoreImageRequest{

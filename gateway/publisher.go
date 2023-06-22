@@ -60,7 +60,7 @@ func initProducer() {
 				continue
 			}
 
-			log.Printf("INFO: published msg: %v", &msg.Message)
+			log.Printf("INFO: published msg: %v", &msg.Message.Uid)
 		}
 	}
 }

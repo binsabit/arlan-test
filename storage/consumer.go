@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"path"
 
 	storage "github.com/binsabit/arlan-test/proto"
 	"github.com/golang/protobuf/proto"
@@ -66,7 +67,7 @@ func initConsumer() {
 				log.Printf("ERROR: fail unmarshl: %s", msg.Body)
 				continue
 			}
-			log.Printf("INFO: received msg: %v", docMsg)
+			log.Printf("INFO: received msg: %v", docMsg.Uid)
 
 			// ack for message
 			err = msg.Ack(true)
@@ -82,8 +83,16 @@ func initConsumer() {
 
 func handleMsg(docMsg *storage.StoreImageRequest) {
 	// TODO create doc on storage
-	log.Println(docMsg.Image.Name)
-	// reply
+	// log.Println(docMsg.Image.Name)
+	filepath := path.Join("./temp", docMsg.Image.Name)
+	_ = os.Mkdir(filepath, os.ModePerm)
+	file, err := os.OpenFile(path.Join(filepath, docMsg.Image.Name+".webp"), os.O_WRONLY|os.O_CREATE, 0600)
+	if err != nil {
+
+	}
+	file.Write([]byte(docMsg.Image.Content))
+	defer file.Close()
+
 	reply := storage.StoreImageResponse{
 		Uid:    docMsg.Uid,
 		Status: "Created",
