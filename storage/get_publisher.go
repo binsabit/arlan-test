@@ -9,23 +9,23 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-type RabbitMsg struct {
-	QueueName string                     `json:"queueName"`
-	Reply     storage.StoreImageResponse `json:"reply"`
+type RabbitGetMsg struct {
+	QueueName string
+	Reply     storage.StorageRespone
 }
 
 // channel to publish rabbit messages
-var rchan = make(chan RabbitMsg, 10)
+var gchan = make(chan RabbitGetMsg, 10)
 
-func initProducer() {
+func initGetProducer() {
 	// conn
 	conn, err := amqp.Dial(rabbitConfig.uri)
 	if err != nil {
-		log.Printf("ERROR: fail init consumer: %s", err.Error())
+		log.Printf("ERROR: fail init image consumer: %s", err.Error())
 		os.Exit(1)
 	}
 
-	log.Printf("INFO: done init producer conn")
+	log.Printf("INFO: done init producer conn--")
 
 	// create channel
 	amqpChannel, err := conn.Channel()
@@ -36,7 +36,7 @@ func initProducer() {
 
 	for {
 		select {
-		case msg := <-rchan:
+		case msg := <-gchan:
 			// marshal
 			data, err := proto.Marshal(&msg.Reply)
 			if err != nil {
@@ -60,7 +60,7 @@ func initProducer() {
 				continue
 			}
 
-			log.Printf("INFO: published msg: %v to: %s", &msg.Reply, msg.QueueName)
+			log.Printf("INFO: published msg to: %s %s", msg.QueueName, msg.Reply.GetImageResponse.Status)
 		}
 	}
 }

@@ -60,24 +60,44 @@ func initConsumer() {
 		select {
 		case msg := <-msgChannel:
 			// unmarshal
-			storeResponse := storage.StoreImageResponse{}
-			err = proto.Unmarshal(msg.Body, &storeResponse)
+			storageResponse := storage.StorageRespone{}
+			err = proto.Unmarshal(msg.Body, &storageResponse)
 			if err != nil {
 				log.Printf("ERROR: fail unmarshl: %s", msg.Body)
 				continue
 			}
-			log.Printf("INFO: received msg: %v", &storeResponse.Status)
 
-			// ack for message
-			err = msg.Ack(true)
-			if err != nil {
-				log.Printf("ERROR: fail to ack: %s", err.Error())
+			getImageResponse := storageResponse.GetImageResponse
+			storeImageResponse := storageResponse.StoreImageResponse
+
+			if getImageResponse != nil {
+				log.Printf("INFO: get image received msg status: %v", getImageResponse.Status)
+
+				// ack for message
+				err = msg.Ack(true)
+				if err != nil {
+					log.Printf("ERROR: fail to ack: %s", err.Error())
+				}
+
+				// find waiting channel(with uid) and forward the reply to it
+				if grchan, ok := grchans[getImageResponse.Image.Name]; ok {
+					grchan <- *getImageResponse
+				}
+			} else if storeImageResponse != nil {
+				log.Printf("INFO: store img received msg status : %v", storeImageResponse.Status)
+
+				// ack for message
+				err = msg.Ack(true)
+				if err != nil {
+					log.Printf("ERROR: fail to ack: %s", err.Error())
+				}
+
+				// find waiting channel(with uid) and forward the reply to it
+				if srchan, ok := srchans[storeImageResponse.Uid]; ok {
+					srchan <- *storeImageResponse
+				}
 			}
 
-			// find waiting channel(with uid) and forward the reply to it
-			if rchan, ok := rchans[storeResponse.Uid]; ok {
-				rchan <- storeResponse
-			}
 		}
 	}
 }

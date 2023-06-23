@@ -2,19 +2,18 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"html/template"
 	"io"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 
 	storage "github.com/binsabit/arlan-test/proto"
 	"github.com/julienschmidt/httprouter"
 )
 
-var rchans = make(map[string](chan storage.StoreImageResponse))
+var srchans = make(map[string](chan storage.StoreImageResponse))
+var grchans = make(map[string](chan storage.GetImageResponse))
 
 type gatewayAPI struct {
 	port string
@@ -28,7 +27,7 @@ func NewGatewayAPI(port string) *gatewayAPI {
 
 func (g gatewayAPI) runApi() error {
 	router := httprouter.New()
-	router.HandlerFunc(http.MethodGet, "/image/:id", g.handleGetImage)
+	router.HandlerFunc(http.MethodGet, "/image/:name", g.handleGetImage)
 	router.HandlerFunc(http.MethodPost, "/convert", g.maxBytes(g.handleConvertImage))
 	router.HandlerFunc(http.MethodGet, "/", g.handleMainPage)
 	router.ServeFiles("/static/*filepath", http.Dir("public"))
@@ -42,53 +41,57 @@ func (g gatewayAPI) runApi() error {
 }
 
 func (g gatewayAPI) handleGetImage(w http.ResponseWriter, r *http.Request) {
-	// id := r.URL.Pa
+
+	params := httprouter.ParamsFromContext(r.Context())
+	name := params.ByName("name")
+	log.Printf("INFO: get image request to image: %s", name)
+
+	log.Println(name)
+	getImgMsg := &storage.GetImageRequest{Name: name, ReplyTo: "gateway"}
+	log.Printf("INFO: get image request to storage")
+
+	grchan := make(chan storage.GetImageResponse)
+	grchans[getImgMsg.Name] = grchan
+
+	msg := RabbitGetImgMsg{
+		QueueName: "image",
+		Message:   *getImgMsg,
+	}
+	gchan <- msg
+	waitReplyGet(getImgMsg.Name, grchan, w)
+
 }
 
 func (g gatewayAPI) handleConvertImage(w http.ResponseWriter, r *http.Request) {
-	log.Println("hello from convert")
+	log.Printf("INFO: convert imagerequest")
 	//reading from form and saving image to disk
 	r.ParseMultipartForm(5 << 20)
 	f, _, err := r.FormFile("file")
 	if err != nil {
-		fmt.Println(err)
+		log.Printf("ERROR: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write(nil)
 		return
 	}
 	defer f.Close()
+	//turning file bute to implement io.Reader for converter
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, f); err != nil {
-		log.Println("ERROR:multipart to bytes", err)
+		log.Println("ERROR: failed to convert multipart file to bytes", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write(nil)
 		return
 	}
-
-	// filename := fh.Filename
 
 	//converting image to  webp
 	res, err := convertJpegToWebp(&buf)
-	// log.Println(res)
 	if err != nil {
-		log.Println(err)
+		log.Printf("ERROR: error while converting %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write(nil)
 		return
 	}
 
-	// filepath := path.Join("./temp", r.FormValue("imagename"))
-	// _ = os.Mkdir(filepath, os.ModePerm)
-	// file, err := os.OpenFile(path.Join(filepath, r.FormValue("imagename")+".webp"), os.O_WRONLY|os.O_CREATE, 0600)
-	// if err != nil {
-	// 	log.Println(err)
-	// 	w.WriteHeader(http.StatusInternalServerError)
-	// 	w.Write(nil)
-	// 	return
-	// }
-	// file.Write(res)
-	// defer file.Close()
-	// sending to rabiitmq
 	img := &storage.Image{
 		Uid:     uid(),
 		Name:    r.FormValue("imagename"),
@@ -100,42 +103,68 @@ func (g gatewayAPI) handleConvertImage(w http.ResponseWriter, r *http.Request) {
 		ReplyTo: "gateway",
 	}
 
-	log.Printf("INFO: convert request: %v", storeMsg.Uid)
+	log.Printf("INFO: convert request to storage service, image UID %v", storeMsg.Uid)
 
-	//create channel andd to rchans with id
-	rchan := make(chan storage.StoreImageResponse)
-	rchans[storeMsg.Uid] = rchan
+	//create channel andd to sotorage recive with id
+	srchan := make(chan storage.StoreImageResponse)
+	srchans[storeMsg.Uid] = srchan
 
-	msg := RabbitMsg{
+	msg := RabbitStoreMsg{
 		QueueName: "storage",
 		Message:   *storeMsg,
 	}
-	pchan <- msg
-	waitReply(storeMsg.Uid, rchan, w, r)
+	schan <- msg
+	waitReplyStore(storeMsg.Uid, srchan, w)
 }
 
-func waitReply(uid string, rchan chan storage.StoreImageResponse, w http.ResponseWriter, r *http.Request) {
+func waitReplyGet(name string, grchan chan storage.GetImageResponse, w http.ResponseWriter) {
 	for {
 		select {
-		case storeResponse := <-rchan:
+		case getResponse := <-grchan:
 			// responses received
-			log.Printf("INFO: received reply: %v uid: %s", storeResponse, uid)
+			log.Printf("INFO: received reply from getimage for name: %s status %v", getResponse.Status, name)
+
+			w.Header().Add("Content-Type", "image/webp")
+			w.Write(getResponse.Image.Content)
+
+			delete(grchans, name)
+			return
+		case <-time.After(15 * time.Second):
+			// timeout
+			log.Printf("ERROR: get image request timeout uid: %s", uid)
 
 			// send response back to client
-			// response(w, "Created", 201)
-			http.Redirect(w, r, "/", http.StatusCreated)
-			// remove channel from rchans
-			delete(rchans, uid)
+			response(w, "Timeout", http.StatusRequestTimeout)
+
+			// remove channel from srchans
+			delete(grchans, name)
+			return
+		}
+
+	}
+}
+
+func waitReplyStore(uid string, srchan chan storage.StoreImageResponse, w http.ResponseWriter) {
+	for {
+		select {
+		case storeResponse := <-srchan:
+			// responses received
+			log.Printf("INFO: received reply from storage: %v uid: %s", storeResponse, uid)
+
+			//send respose created
+			response(w, "Created", http.StatusCreated)
+			// remove channel from srchans
+			delete(srchans, uid)
 			return
 		case <-time.After(10 * time.Second):
 			// timeout
 			log.Printf("ERROR: request timeout uid: %s", uid)
 
 			// send response back to client
-			response(w, "Timeout", 408)
+			response(w, "Timeout", http.StatusRequestTimeout)
 
-			// remove channel from rchans
-			delete(rchans, uid)
+			// remove channel from srchans
+			delete(srchans, uid)
 			return
 		}
 
@@ -148,26 +177,6 @@ func (g gatewayAPI) handleMainPage(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 	}
 	t.Execute(w, nil)
-}
-
-func (g gatewayAPI) maxBytes(f http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, 32768+5000000)
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "Bad Request", http.StatusBadRequest)
-			return
-		}
-		f(w, r)
-	}
-}
-
-func uid() string {
-	t := time.Now().UnixNano() / int64(time.Millisecond)
-	return "ops" + strconv.FormatInt(t, 10)
-}
-
-func timestamp() int64 {
-	return time.Now().UnixNano() / int64(time.Millisecond)
 }
 
 func response(w http.ResponseWriter, resp string, status int) {

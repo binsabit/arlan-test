@@ -1,6 +1,10 @@
 package main
 
 func main() {
-	go initConsumer()
-	initProducer()
+	f := &FileStorage{Dir: "temp"}
+	go initStoreConsumer(f)
+	go initGetConsumer(f)
+	go initGetProducer()
+
+	initStoreProducer()
 }

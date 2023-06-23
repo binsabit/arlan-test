@@ -11,19 +11,13 @@ import (
 
 type RabbitStoreMsg struct {
 	QueueName string
-	Message   storage.StoreImageRequest
-}
-
-type RabbitGetImgMsg struct {
-	QueueName string
-	Message   storage.GetImageRequest
+	Reply     storage.StorageRespone
 }
 
 // channel to publish rabbit messages
 var schan = make(chan RabbitStoreMsg, 10)
-var gchan = make(chan RabbitGetImgMsg, 10)
 
-func initProducer() {
+func initStoreProducer() {
 	// conn
 	conn, err := amqp.Dial(rabbitConfig.uri)
 	if err != nil {
@@ -44,7 +38,7 @@ func initProducer() {
 		select {
 		case msg := <-schan:
 			// marshal
-			data, err := proto.Marshal(&msg.Message)
+			data, err := proto.Marshal(&msg.Reply)
 			if err != nil {
 				log.Printf("ERROR: fail marshal: %s", err.Error())
 				continue
@@ -66,33 +60,7 @@ func initProducer() {
 				continue
 			}
 
-			log.Printf("INFO: published to \"storage\"msg: %v", &msg.Message.Uid)
-
-		case msg := <-gchan:
-			// marshal
-			data, err := proto.Marshal(&msg.Message)
-			if err != nil {
-				log.Printf("ERROR: fail marshal: %s", err.Error())
-				continue
-			}
-
-			// publish message
-			err = amqpChannel.Publish(
-				"",            // exchange
-				msg.QueueName, // routing key
-				false,         // mandatory
-				false,         // immediate
-				amqp.Publishing{
-					ContentType: "text/plain",
-					Body:        data,
-				},
-			)
-			if err != nil {
-				log.Printf("ERROR: fail publish msg: %s", err.Error())
-				continue
-			}
-
-			log.Printf("INFO: published to \"image\" msg: %v", &msg.Message.Name)
+			log.Printf("INFO: published msg: %v to: %s", &msg.Reply, msg.QueueName)
 		}
 	}
 }

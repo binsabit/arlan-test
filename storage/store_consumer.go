@@ -3,27 +3,26 @@ package main
 import (
 	"log"
 	"os"
-	"path"
 
 	storage "github.com/binsabit/arlan-test/proto"
 	"github.com/golang/protobuf/proto"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-func initConsumer() {
+func initStoreConsumer(s Storage) {
 	// conn
 	conn, err := amqp.Dial(rabbitConfig.uri)
 	if err != nil {
-		log.Printf("ERROR: fail init consumer: %s", err.Error())
+		log.Printf("ERROR: fail init storage consumer: %s", err.Error())
 		os.Exit(1)
 	}
 
-	log.Printf("INFO: done init consumer conn")
+	log.Printf("INFO: done init storage consumer conn")
 
 	// create channel
 	amqpChannel, err := conn.Channel()
 	if err != nil {
-		log.Printf("ERROR: fail create channel: %s", err.Error())
+		log.Printf("ERROR: fail create storage channel: %s", err.Error())
 		os.Exit(1)
 	}
 
@@ -37,7 +36,7 @@ func initConsumer() {
 		nil,       // arguments
 	)
 	if err != nil {
-		log.Printf("ERROR: fail create queue: %s", err.Error())
+		log.Printf("ERROR: fail create storage queue: %s", err.Error())
 		os.Exit(1)
 	}
 
@@ -52,7 +51,7 @@ func initConsumer() {
 		nil,        // args
 	)
 	if err != nil {
-		log.Printf("ERROR: fail create channel: %s", err.Error())
+		log.Printf("ERROR: fail create storage channel: %s", err.Error())
 		os.Exit(1)
 	}
 
@@ -61,13 +60,13 @@ func initConsumer() {
 		select {
 		case msg := <-msgChannel:
 			// unmarshal
-			docMsg := &storage.StoreImageRequest{}
-			err = proto.Unmarshal(msg.Body, docMsg)
+			req := &storage.StoreImageRequest{}
+			err = proto.Unmarshal(msg.Body, req)
 			if err != nil {
 				log.Printf("ERROR: fail unmarshl: %s", msg.Body)
 				continue
 			}
-			log.Printf("INFO: received msg: %v", docMsg.Uid)
+			log.Printf("INFO: received storage msg: %v", req.Uid)
 
 			// ack for message
 			err = msg.Ack(true)
@@ -76,30 +75,25 @@ func initConsumer() {
 			}
 
 			// handle docMsg
-			handleMsg(docMsg)
+			handleStoreRequest(s, req)
 		}
 	}
 }
 
-func handleMsg(docMsg *storage.StoreImageRequest) {
-	// TODO create doc on storage
-	// log.Println(docMsg.Image.Name)
-	filepath := path.Join("./temp", docMsg.Image.Name)
-	_ = os.Mkdir(filepath, os.ModePerm)
-	file, err := os.OpenFile(path.Join(filepath, docMsg.Image.Name+".webp"), os.O_WRONLY|os.O_CREATE, 0600)
+func handleStoreRequest(s Storage, req *storage.StoreImageRequest) {
+	reply := storage.StoreImageResponse{Uid: req.Uid}
+
+	err := s.StoreImage(req)
 	if err != nil {
+		reply.Status = "Can't store err: " + err.Error()
+	} else {
+		reply.Status = "Created"
+	}
 
+	msg := RabbitStoreMsg{
+		QueueName: req.ReplyTo,
+		Reply:     storage.StorageRespone{StoreImageResponse: &reply, GetImageResponse: nil},
 	}
-	file.Write([]byte(docMsg.Image.Content))
-	defer file.Close()
-
-	reply := storage.StoreImageResponse{
-		Uid:    docMsg.Uid,
-		Status: "Created",
-	}
-	msg := RabbitMsg{
-		QueueName: docMsg.ReplyTo,
-		Reply:     reply,
-	}
-	rchan <- msg
+	log.Println(msg)
+	schan <- msg
 }

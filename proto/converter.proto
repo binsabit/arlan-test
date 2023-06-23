@@ -11,16 +11,19 @@ message Image{
     string name = 2;
     bytes content = 3;
 }
+message StorageRespone{
+    GetImageResponse getImageResponse = 1;
+    StoreImageResponse storeImageResponse = 2;
+}
 
 message GetImageRequest{
-    string name = 1;
-    string replyTo = 2;
+    string name = 2;
+    string replyTo = 3;
 }
 
 message GetImageResponse{
     Image image = 1;
     string status = 2;
-
 }
 
 message StoreImageRequest{
